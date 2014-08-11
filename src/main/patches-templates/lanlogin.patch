@@ -1,0 +1,140 @@
+Index: src/main/java/net/minecraft/server/LanLoginUtils.java
+===================================================================
+--- src/main/java/net/minecraft/server/LanLoginUtils.java	(revision )
++++ src/main/java/net/minecraft/server/LanLoginUtils.java	(revision )
+@@ -0,0 +1,91 @@
++package net.minecraft.server;
++
++import org.apache.commons.lang.StringUtils;
++
++import java.net.InetSocketAddress;
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * Part of LanLogin Patch
++ */
++public class LanLoginUtils {
++
++    private static String version = "${project.version}";
++
++    /**
++     * This is a static class that can't be instantiated.
++     */
++    private LanLoginUtils() {
++        throw new UnsupportedOperationException(LanLoginUtils.class + " should not be constructed");
++    }
++
++    /**
++     * Returns the startup message.
++     *
++     * This message includes the LanLogin version and the configured LanLogin users.
++     *
++     * @param server the {@link net.minecraft.server.MinecraftServer} instance
++     * @return startup message
++     */
++    public static String startUpMessage(MinecraftServer server) {
++        String properties = server.getPropertyManager().getString("lan-login-users", "");
++        Map userMap = parsePropertiesToMap(properties);
++
++        return ("LanLogin patch version " + getVersion() + " with configured users:\n  " + userMap.toString());
++    }
++
++    /**
++     * Returns the LanLogin username.  The username is looked up in the "lan-login-usernames" property of the
++     * server.properties file. The properties list needs to be in the "ip=username,ip=username".
++     *
++     * server.properties example:
++     *   lan-login-users=127.0.0.1:PapaMiner,192.168.1.15:MamaMiner,129.168.10.114:LittleMiner
++     *
++     * @param socketAddress the {@link java.net.InetSocketAddress} of user
++     * @param server the {@link net.minecraft.server.MinecraftServer} instance
++     * @return username
++     */
++    public static String getLanLoginUsername(InetSocketAddress socketAddress, MinecraftServer server) {
++        String ip = socketAddress.getAddress().getHostAddress();
++        String properties = server.getPropertyManager().getString("lan-login-users", "");
++        Map userMap = parsePropertiesToMap(properties);
++
++        // No LanLogin username specified for the ip
++        if (userMap == null || !userMap.containsKey(ip)) {
++            return ip;
++        }
++
++        return (String) userMap.get(ip);
++    }
++
++    /**
++     * Convert a string property to a map.
++     *
++     * The string format should be "key:value, key:value, key:value".
++     *
++     * Building maps every time anew is not very efficient but it keeps the patch more separate from
++     * the CraftBukkit code.
++     *
++     * @param properties string representation of the property map
++     * @return property map
++     */
++    private static  Map parsePropertiesToMap(String properties) {
++        Map<String, String> map = new HashMap<String, String>();
++        for (String property : properties.split(",")) {
++            String[] propertyPair = property.split(":");
++            if (propertyPair.length == 2) {
++                String key = propertyPair[0];
++                String value = propertyPair[1];
++                if (StringUtils.isNotBlank(key) && StringUtils.isNotBlank(value)) {
++                    map.put(key.trim(), value.trim());
++                }
++            }
++        }
++        return map;
++    }
++
++    public static String getVersion() {
++        return version;
++    }
++}
+Index: src/main/java/net/minecraft/server/DedicatedServer.java
+===================================================================
+--- src/main/java/net/minecraft/server/DedicatedServer.java	(revision 6418460ff073a5d58a58fd3e40e9b6dbd8c83124)
++++ src/main/java/net/minecraft/server/DedicatedServer.java	(revision )
+@@ -121,6 +121,10 @@
+             this.a(MinecraftEncryption.b());
+             i.info("Starting Minecraft server on " + (this.getServerIp().length() == 0 ? "*" : this.getServerIp()) + ":" + this.L());
+ 
++            /** ---- LanLogin patch start ---- **/
++            i.info(LanLoginUtils.startUpMessage(this));
++            /** ---- LanLogin patch end ---- **/
++
+             try {
+                 this.ai().a(inetaddress, this.L());
+             } catch (Throwable ioexception) { // CraftBukkit - IOException -> Throwable
+Index: src/main/java/net/minecraft/server/LoginListener.java
+===================================================================
+--- src/main/java/net/minecraft/server/LoginListener.java	(revision 6418460ff073a5d58a58fd3e40e9b6dbd8c83124)
++++ src/main/java/net/minecraft/server/LoginListener.java	(revision )
+@@ -1,5 +1,6 @@
+ package net.minecraft.server;
+ 
++import java.net.InetSocketAddress;
+ import java.security.PrivateKey;
+ import java.util.Arrays;
+ import java.util.Random;
+@@ -63,6 +64,17 @@
+         if (!this.i.isComplete()) {
+             this.i = this.a(this.i);
+         }
++
++        /** ---- LanLogin patch start ---- **
++         *  Change user name to their IP address so that same account can
++         *  log in multiple times from different computers.
++         */
++        InetSocketAddress socketAddress = (InetSocketAddress) this.networkManager.getSocketAddress();
++        String llUserName = LanLoginUtils.getLanLoginUsername(socketAddress, server);
++        UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + llUserName).getBytes(Charsets.UTF_8));
++        c.info("LanLogin: " + this.i.getName() + " switching name to " + llUserName);
++        this.i = new GameProfile(uuid, llUserName);
++        /** ---- LanLogin patch end ---- **/
+ 
+         // CraftBukkit start - fire PlayerLoginEvent
+         EntityPlayer s = this.server.getPlayerList().attemptLogin(this, this.i, this.hostname);
